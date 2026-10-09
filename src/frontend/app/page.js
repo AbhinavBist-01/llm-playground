@@ -106,14 +106,20 @@ export default function LLMPlayground() {
       content: inputPrompt.trim(),
     };
 
+    const assistantId = (Date.now() + 1).toString();
+    const assistantMessage = {
+      id: assistantId,
+      role: "assistant",
+      content: "",
+    };
+
     const newMessages = [...messages, userMessage];
-    setMessages(newMessages);
+    // Add both user message and assistant placeholder immediately
+    setMessages([...newMessages, assistantMessage]);
     setInputPrompt("");
     setIsLoading(true);
 
-    const assistantId = (Date.now() + 1).toString();
-
-    // Prepare API messages payload (omit UI ids)
+    // Prepare API messages payload (omit UI ids and empty assistant placeholder)
     const apiMessages = newMessages.map(({ role, content }) => ({
       role,
       content,
@@ -144,29 +150,39 @@ export default function LLMPlayground() {
       }
 
       if (stream) {
-        // Create empty assistant message container
-        setMessages((prev) => [
-          ...prev,
-          { id: assistantId, role: "assistant", content: "" },
-        ]);
-
         const reader = response.body.getReader();
         const decoder = new TextDecoder("utf-8");
         let accumulated = "";
+        let buffer = "";
 
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
 
-          const chunk = decoder.decode(value, { stream: true });
-          const lines = chunk.split("\n\n");
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          // Keep trailing incomplete line in buffer
+          buffer = lines.pop() || "";
 
-          for (const line of lines) {
-            if (line.startsWith("data: ")) {
-              try {
-                const parsed = JSON.parse(line.replace("data: ", "").trim());
-                if (parsed.type === "chunk" && parsed.content) {
-                  accumulated += parsed.content;
+          for (const rawLine of lines) {
+            const line = rawLine.trim();
+            if (!line || !line.startsWith("data:")) continue;
+
+            const jsonStr = line.replace(/^data:\s*/, "");
+            try {
+              const parsed = JSON.parse(jsonStr);
+              if (parsed.type === "chunk" && typeof parsed.content === "string") {
+                accumulated += parsed.content;
+                setMessages((prev) =>
+                  prev.map((msg) =>
+                    msg.id === assistantId
+                      ? { ...msg, content: accumulated }
+                      : msg
+                  )
+                );
+              } else if (parsed.type === "done") {
+                if (parsed.text && !accumulated) {
+                  accumulated = parsed.text;
                   setMessages((prev) =>
                     prev.map((msg) =>
                       msg.id === assistantId
@@ -174,26 +190,27 @@ export default function LLMPlayground() {
                         : msg
                     )
                   );
-                } else if (parsed.type === "done") {
-                  if (parsed.telemetry) {
-                    setTelemetry(parsed.telemetry);
-                  }
-                } else if (parsed.type === "error") {
-                  throw new Error(parsed.error);
                 }
-              } catch (err) {
-                // Ignore parse errors on partial chunk borders
+                if (parsed.telemetry) {
+                  setTelemetry(parsed.telemetry);
+                }
+              } else if (parsed.type === "error") {
+                throw new Error(parsed.error);
               }
+            } catch (err) {
+              // Ignore partial JSON parse errors
             }
           }
         }
       } else {
         // Non-streaming response
         const data = await response.json();
-        setMessages((prev) => [
-          ...prev,
-          { id: assistantId, role: "assistant", content: data.text },
-        ]);
+        const fullText = data.text || "";
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === assistantId ? { ...msg, content: fullText } : msg
+          )
+        );
         if (data.telemetry) {
           setTelemetry(data.telemetry);
         }
@@ -201,6 +218,13 @@ export default function LLMPlayground() {
     } catch (err) {
       console.error(err);
       setErrorMsg(err.message || "Request failed. Check server and API key.");
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === assistantId && !msg.content
+            ? { ...msg, content: `Error: ${err.message || "Failed to receive response"}` }
+            : msg
+        )
+      );
     } finally {
       setIsLoading(false);
     }
