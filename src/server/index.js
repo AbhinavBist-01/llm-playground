@@ -170,6 +170,11 @@ app.post("/api/chat", async (req, res) => {
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
 
+      let isClosed = false;
+      req.on("close", () => {
+        isClosed = true;
+      });
+
       const streamResponse = await client.chat.completions.create({
         ...callPayload,
         stream: true,
@@ -180,6 +185,7 @@ app.post("/api/chat", async (req, res) => {
       let usage = null;
 
       for await (const chunk of streamResponse) {
+        if (isClosed) break;
         const deltaContent = chunk.choices?.[0]?.delta?.content || "";
         if (deltaContent) {
           accumulatedText += deltaContent;
@@ -189,6 +195,8 @@ app.post("/api/chat", async (req, res) => {
           usage = chunk.usage;
         }
       }
+
+      if (isClosed) return;
 
       const latency = Date.now() - start;
       const inputTokens = usage?.prompt_tokens ?? estimateTokens(formattedMessages);
