@@ -1,12 +1,12 @@
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
-
-dotenv.config();
+import "dotenv/config";
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+const PORT = process.env.PORT || 3000;
 
 const VALID_ROLES = ["system", "user", "assistant", "developer"];
 
@@ -53,7 +53,11 @@ app.post("/api/chat", async (req, res) => {
         });
       }
 
-      if (!msg.role || typeof msg.role !== "string" || !VALID_ROLES.includes(msg.role)) {
+      if (
+        !msg.role ||
+        typeof msg.role !== "string" ||
+        !VALID_ROLES.includes(msg.role)
+      ) {
         return res.status(400).json({
           error: `Message at index ${i} has an invalid role. Valid roles are: ${VALID_ROLES.join(", ")}`,
         });
@@ -120,7 +124,11 @@ app.post("/api/chat", async (req, res) => {
 
     // 6. Return
     res.json({
-      text: response.output_text ?? response.text ?? response.choices?.[0]?.message?.content ?? "",
+      text:
+        response.output_text ??
+        response.text ??
+        response.choices?.[0]?.message?.content ??
+        "",
       model: response.model || model,
       usage: response.usage,
       latency,
@@ -134,6 +142,6 @@ app.post("/api/chat", async (req, res) => {
   }
 });
 
-app.listen(3000, () => {
-  console.log("Server is running on port 3000");
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
 });
